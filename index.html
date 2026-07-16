@@ -45,6 +45,8 @@
                         <select id="model-select" class="settings-select">
                             <option value="gemini-2.5-flash">Gemini 2.5 Flash (Hızlı)</option>
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro (Gelişmiş)</option>
+                            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
                         </select>
                     </div>
                     <span style="font-size:11px;color:var(--text-muted)">* Anahtarı boş bırakırsanız yerel şablon (çevrimdışı) motoru devreye girer.</span>
@@ -115,16 +117,60 @@
             <!-- Dashboard Topbar -->
             <header class="flex-space">
                 <div>
-                    <h2 style="font-size: 24px;">Özgün Soru Üretim Paneli</h2>
-                    <p style="font-size: 13px; color: var(--text-secondary);">Müfredata, teoremlere ve taksonomilere göre ezber bozan sorular oluşturun.</p>
+                    <h2 id="main-panel-title" style="font-size: 24px;">Özgün Soru Üretim Paneli</h2>
+                    <p id="main-panel-desc" style="font-size: 13px; color: var(--text-secondary);">Müfredata, teoremlere ve taksonomilere göre ezber bozan sorular oluşturun.</p>
                 </div>
                 <button id="toggle-theme" class="toggle-theme-btn" title="Temayı Değiştir">
                     <i data-lucide="sun"></i>
                 </button>
             </header>
 
+            <!-- Generation Mode Tabs -->
+            <div class="mode-tabs-container glass-card" style="padding: 6px; display: flex; gap: 8px; border-radius: 12px; margin-bottom: 5px;">
+                <button id="mode-tab-original" class="mode-tab active" style="flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; background: transparent; border: 1px solid transparent;">
+                    <i data-lucide="sparkles" style="width: 16px; height: 16px;"></i> Özgün ve Yaratıcı Soru
+                </button>
+                <button id="mode-tab-similar" class="mode-tab" style="flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; background: transparent; border: 1px solid transparent;">
+                    <i data-lucide="copy" style="width: 16px; height: 16px;"></i> Çıkmış Soru Benzeri
+                </button>
+            </div>
+
             <!-- CONFIGURATION SECTION (Left Input Area) -->
             <div class="results-grid">
+                
+                <!-- Source Selector for Similar Mode (Visible only in Similar Mode) -->
+                <div id="similar-source-selector" class="glass-card" style="display: none; flex-direction: column; gap: 10px; margin-bottom: 5px;">
+                    <div class="section-title">
+                        <i data-lucide="help-circle"></i> Çıkmış Soru Kaynağı
+                    </div>
+                    <div class="flex-space" style="gap: 8px; margin-bottom: 5px;">
+                        <button id="src-tab-template" class="selector-btn active" style="flex: 1; padding: 8px; font-size: 12px; font-weight:600; cursor:pointer;">
+                            Kazanım Şablonları (Çevrimdışı)
+                        </button>
+                        <button id="src-tab-custom" class="selector-btn" style="flex: 1; padding: 8px; font-size: 12px; font-weight:600; cursor:pointer;">
+                            Kendi Sorunu Yükle (AI)
+                        </button>
+                    </div>
+                    
+                    <!-- Group 1: Offline templates selection -->
+                    <div id="src-group-template" style="display: block;">
+                        <p style="font-size:11px; color:var(--text-secondary); margin: 0 0 5px 0;">Seçtiğiniz derse ve kazanıma göre yerel veri tabanından benzer sorular üretilir.</p>
+                    </div>
+
+                    <!-- Group 2: Custom input/upload selection -->
+                    <div id="src-group-custom" style="display: none; flex-direction: column; gap: 8px;">
+                        <p style="font-size:11px; color:var(--text-secondary); margin: 0 0 5px 0;">Benzerini üretmek istediğiniz sorunun metnini yazın veya PDF/Görsel dosyasını yükleyin:</p>
+                        <textarea id="custom-source-text" class="input-textarea" style="height: 60px; font-size:12px; resize: none;" placeholder="Çıkmış soruyu buraya yapıştırın veya yazın..."></textarea>
+                        
+                        <div class="flex-space" style="gap: 10px; justify-content: flex-start; align-items: center;">
+                            <input type="file" id="custom-source-file" accept=".pdf,image/*" style="display: none;">
+                            <button id="btn-custom-upload" class="selector-btn" type="button" style="padding: 6px 12px; font-size:11px; display:flex; align-items:center; gap:5px; cursor:pointer; background: var(--bg-hover); border: 1px solid var(--border-color); border-radius: 6px;">
+                                <i data-lucide="file-text" style="width:14px; height:14px;"></i> PDF veya Görsel Seç
+                            </button>
+                            <span id="custom-upload-status" style="font-size:11px; color:var(--text-muted); word-break:break-all; max-width:200px;">Dosya seçilmedi</span>
+                        </div>
+                    </div>
+                </div>
                 
                 <!-- STEP 1: Domain & Outcome Selection -->
                 <section class="glass-card">
@@ -275,6 +321,18 @@
                             <i data-lucide="plus-circle"></i> Teste Ekle
                         </button>
                     </div>
+                    <!-- AI Correction / Edit Panel -->
+                    <div class="ai-correction-panel" style="margin-top: 20px; padding: 15px; background: rgba(6, 182, 212, 0.05); border: 1px solid rgba(6, 182, 212, 0.2); border-radius: 10px;">
+                        <label style="font-size:12px; color:var(--color-secondary); font-weight: 600; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                            <i data-lucide="sparkles" style="width:14px; height:14px;"></i> Yapay Zeka ile Soruyu Düzenle / Düzelt
+                        </label>
+                        <div style="display:flex; gap:10px;">
+                            <input type="text" id="ai-edit-prompt" placeholder="Örn: C açısını 90 derece yap, B seçeneğini 18 yap veya çizimi güncelle..." style="flex-grow:1; padding:10px; background:rgba(0,0,0,0.2); border:1px solid var(--border-color); border-radius:6px; color:white; font-size:13px;">
+                            <button id="btn-ai-edit" class="action-btn primary" style="padding: 0 15px; font-size: 13px; font-weight: 600; white-space: nowrap;">
+                                <i data-lucide="edit-3"></i> Düzenle
+                            </button>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Detailed Solutions & Cognitive Analysis Tabs -->
@@ -421,10 +479,10 @@
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
     
     <!-- Platform script modules -->
-    <script src="kazanimlar.js"></script>
-    <script src="keyboard.js"></script>
-    <script src="api.js"></script>
-    <script src="app.js"></script>
+    <script src="kazanimlar.js?v=2.0"></script>
+    <script src="keyboard.js?v=2.0"></script>
+    <script src="api.js?v=2.0"></script>
+    <script src="app.js?v=2.0"></script>
     
     <!-- Initialize Lucide Icons -->
     <script>

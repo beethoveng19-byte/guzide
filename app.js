@@ -1,6 +1,25 @@
-// ÖABT Matematik Soru Hazırlama ve Analiz Platformu - Uygulama Mantığı
+// Safe storage wrapper to prevent CORS/file:// security exceptions
+const storage = (function() {
+    try {
+        const x = '__storage_test__';
+        localStorage.setItem(x, x);
+        localStorage.removeItem(x);
+        return localStorage;
+    } catch(e) {
+        console.warn("localStorage is blocked or unavailable. Falling back to in-memory storage.");
+        const memStore = {};
+        return {
+            getItem: (key) => memStore[key] || null,
+            setItem: (key, val) => { memStore[key] = String(val); },
+            removeItem: (key) => { delete memStore[key]; }
+        };
+    }
+})();
 
 let activeDomain = "analiz";
+let activeGenerationMode = "original";
+let activeSimilarSource = "template";
+let uploadedFileData = null;
 let selectedOutcome = "";
 let selectedTheorems = [];
 let questionHistory = [];
@@ -35,6 +54,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2. Set event listeners for parameter buttons
     setupParameterListeners();
+    setupGenerationModeListeners();
+    setupSimilarSourceListeners();
     
     // 3. Live Preview listener
     const additionalInput = document.getElementById("additional-instructions");
@@ -69,6 +90,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btn-copy").addEventListener("click", copyLatexToClipboard);
     document.getElementById("btn-clear-history").addEventListener("click", clearHistory);
     document.getElementById("btn-toggle-test").addEventListener("click", toggleTestQuestion);
+    document.getElementById("btn-ai-edit").addEventListener("click", handleAIQuestionEdit);
     
     // 6. Test Pool Print/Export/Solve actions
     document.getElementById("btn-print-test-student").addEventListener("click", () => printTest("student"));
@@ -107,28 +129,28 @@ function setupResultsTabListeners() {
     });
 }
 
-// Load settings from localStorage
+// Load settings from storage
 function initSettings() {
-    const apiKey = localStorage.getItem("oabt_gemini_api_key") || "";
+    const apiKey = storage.getItem("oabt_gemini_api_key") || "";
     document.getElementById("api-key-input").value = apiKey;
     
-    const savedModel = localStorage.getItem("oabt_gemini_model") || "gemini-2.5-flash";
+    const savedModel = storage.getItem("oabt_gemini_model") || "gemini-2.5-flash";
     document.getElementById("model-select").value = savedModel;
 
     // API Key input change listener
     document.getElementById("api-key-input").addEventListener("change", (e) => {
-        localStorage.setItem("oabt_gemini_api_key", e.target.value.trim());
+        storage.setItem("oabt_gemini_api_key", e.target.value.trim());
     });
 
     // Model selection change listener
     document.getElementById("model-select").addEventListener("change", (e) => {
-        localStorage.setItem("oabt_gemini_model", e.target.value);
+        storage.setItem("oabt_gemini_model", e.target.value);
     });
 }
 
 // Theme handling
 function initTheme() {
-    const savedTheme = localStorage.getItem("oabt_theme") || "dark";
+    const savedTheme = storage.getItem("oabt_theme") || "dark";
     document.body.setAttribute("data-theme", savedTheme);
     updateThemeIcon(savedTheme);
 
@@ -136,7 +158,7 @@ function initTheme() {
         const currentTheme = document.body.getAttribute("data-theme") || "dark";
         const newTheme = currentTheme === "dark" ? "light" : "dark";
         document.body.setAttribute("data-theme", newTheme);
-        localStorage.setItem("oabt_theme", newTheme);
+        storage.setItem("oabt_theme", newTheme);
         updateThemeIcon(newTheme);
     });
 }
@@ -282,10 +304,124 @@ function setupParameterListeners() {
     });
 }
 
+// Setup generation mode tab click listeners (Original vs Similar)
+function setupGenerationModeListeners() {
+    const tabOriginal = document.getElementById("mode-tab-original");
+    const tabSimilar = document.getElementById("mode-tab-similar");
+    const titleEl = document.getElementById("main-panel-title");
+    const descEl = document.getElementById("main-panel-desc");
+    const sourceSelector = document.getElementById("similar-source-selector");
+
+    if (!tabOriginal || !tabSimilar) return;
+
+    tabOriginal.addEventListener("click", () => {
+        activeGenerationMode = "original";
+        tabOriginal.classList.add("active");
+        tabSimilar.classList.remove("active");
+        if (sourceSelector) sourceSelector.style.display = "none";
+        if (titleEl) titleEl.textContent = "Özgün Soru Üretim Paneli";
+        if (descEl) descEl.textContent = "Müfredata, teoremlere ve taksonomilere göre ezber bozan sorular oluşturun.";
+        const genBtn = document.getElementById("generate-btn");
+        if (genBtn) {
+            genBtn.innerHTML = `<i data-lucide="sparkles"></i> ÖZGÜN VE ANALİTİK SORU ÜRET`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    });
+
+    tabSimilar.addEventListener("click", () => {
+        activeGenerationMode = "similar";
+        tabSimilar.classList.add("active");
+        tabOriginal.classList.remove("active");
+        if (sourceSelector) sourceSelector.style.display = "flex";
+        if (titleEl) titleEl.textContent = "Çıkmış Benzeri Soru Üretim Paneli";
+        if (descEl) descEl.textContent = "ÖSYM ÖABT geçmiş sınav sorularının mantık ve kurgusuna paralel pratik soruları üretin.";
+        const genBtn = document.getElementById("generate-btn");
+        if (genBtn) {
+            if (activeSimilarSource === "custom") {
+                genBtn.innerHTML = `<i data-lucide="sparkles"></i> BU SORUYA BENZER ÜRET (AI)`;
+            } else {
+                genBtn.innerHTML = `<i data-lucide="copy"></i> ÇIKMIŞ BENZERİ SORU ÜRET`;
+            }
+            if (window.lucide) window.lucide.createIcons();
+        }
+    });
+}
+
+// Setup similar question source tab click and file upload listeners
+function setupSimilarSourceListeners() {
+    const tabTemplate = document.getElementById("src-tab-template");
+    const tabCustom = document.getElementById("src-tab-custom");
+    const groupTemplate = document.getElementById("src-group-template");
+    const groupCustom = document.getElementById("src-group-custom");
+    const genBtn = document.getElementById("generate-btn");
+
+    if (!tabTemplate || !tabCustom || !groupTemplate || !groupCustom) return;
+
+    tabTemplate.addEventListener("click", () => {
+        activeSimilarSource = "template";
+        tabTemplate.classList.add("active");
+        tabCustom.classList.remove("active");
+        groupTemplate.style.display = "block";
+        groupCustom.style.display = "none";
+        if (genBtn) {
+            genBtn.innerHTML = `<i data-lucide="copy"></i> ÇIKMIŞ BENZERİ SORU ÜRET`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    });
+
+    tabCustom.addEventListener("click", () => {
+        activeSimilarSource = "custom";
+        tabCustom.classList.add("active");
+        tabTemplate.classList.remove("active");
+        groupTemplate.style.display = "none";
+        groupCustom.style.display = "flex";
+        if (genBtn) {
+            genBtn.innerHTML = `<i data-lucide="sparkles"></i> BU SORUYA BENZER ÜRET (AI)`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    });
+
+    // Custom past question file upload handlers
+    const btnUpload = document.getElementById("btn-custom-upload");
+    const fileInput = document.getElementById("custom-source-file");
+    const statusEl = document.getElementById("custom-upload-status");
+
+    if (btnUpload && fileInput) {
+        btnUpload.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) {
+                uploadedFileData = null;
+                if (statusEl) statusEl.textContent = "Dosya seçilmedi";
+                return;
+            }
+            if (statusEl) statusEl.textContent = `${file.name} yükleniyor...`;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const result = evt.target.result;
+                const commaIdx = result.indexOf(",");
+                const base64 = result.substring(commaIdx + 1);
+                uploadedFileData = {
+                    name: file.name,
+                    mimeType: file.type,
+                    base64: base64
+                };
+                if (statusEl) statusEl.textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB) yüklendi.`;
+            };
+            reader.onerror = function() {
+                uploadedFileData = null;
+                if (statusEl) statusEl.textContent = "Dosya okunurken hata oluştu!";
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+}
+
 // Generate question action
 async function generateQuestion() {
-    const apiKey = localStorage.getItem("oabt_gemini_api_key") || "";
-    const model = localStorage.getItem("oabt_gemini_model") || "gemini-2.5-flash";
+    const apiKey = document.getElementById("api-key-input").value.trim();
+    const model = document.getElementById("model-select").value;
     const customInstructions = document.getElementById("additional-instructions").value.trim();
     
     // Find active outcome text
@@ -303,7 +439,8 @@ async function generateQuestion() {
         solo: selectedSOLO,
         dok: selectedDOK,
         theorems: selectedTheorems,
-        customInstructions: customInstructions
+        customInstructions: customInstructions,
+        generationMode: activeGenerationMode
     };
 
     // Show loading spinner
@@ -315,7 +452,24 @@ async function generateQuestion() {
     try {
         let questionData = null;
         
-        if (apiKey) {
+        if (activeGenerationMode === "similar") {
+            if (activeSimilarSource === "custom") {
+                if (!apiKey) {
+                    throw new Error("Kendi sorunuzu yükleyerek benzer soru üretmek için geçerli bir API anahtarı girmelisiniz. Çevrimdışı şablonları kullanmak için 'Kazanım Şablonları (Çevrimdışı)' seçeneğine tıklayabilirsiniz.");
+                }
+                const customText = document.getElementById("custom-source-text").value.trim();
+                if (!customText && !uploadedFileData) {
+                    throw new Error("Lütfen benzerini üretmek istediğiniz çıkmış sorunun metnini yazın veya bir PDF/Görsel dosyası seçin.");
+                }
+                console.log("Generating similar question from custom source with Gemini API...");
+                questionData = await generateSimilarQuestionFromCustomWithGemini(apiKey, model, customText, uploadedFileData, params);
+            } else {
+                console.log("Generating offline similar question...");
+                // Mimic loading delay for similar generator for natural feel
+                await new Promise(resolve => setTimeout(resolve, 800));
+                questionData = generateSimilarQuestionOffline(params);
+            }
+        } else if (apiKey) {
             console.log("Generating with Gemini API...");
             questionData = await generateQuestionWithGemini(apiKey, model, params);
         } else {
@@ -390,6 +544,10 @@ function preprocessText(text) {
     cleaned = cleaned.replace(/\\mathbb{Z}\^1/g, '\\mathbb{Z}^+');
     cleaned = cleaned.replace(/\\mathbb{Z}\^{1}/g, '\\mathbb{Z}^+');
     
+    // Convert literal \n or real newlines to <br> tags for correct HTML line breaks
+    cleaned = cleaned.replace(/\\n/g, '<br>');
+    cleaned = cleaned.replace(/\n/g, '<br>');
+    
     return cleaned;
 }
 
@@ -407,7 +565,11 @@ function renderQuestion(qData) {
     diffBadge.className = "history-difficulty " + getDifficultyClass(qData.metadata.difficulty);
 
     // Set Question Text
-    document.getElementById("question-text-content").innerHTML = preprocessText(qData.question);
+    let questionHtml = preprocessText(qData.question);
+    if (qData.svg_geometry) {
+        questionHtml += `<div class="question-svg-container" style="display: flex; justify-content: center; margin: 20px 0; background: rgba(255,255,255,0.03); border-radius: 8px; padding: 15px; border: 1px solid rgba(255,255,255,0.08);">${qData.svg_geometry}</div>`;
+    }
+    document.getElementById("question-text-content").innerHTML = questionHtml;
 
     // Render options
     const optionsContainer = document.getElementById("options-list");
@@ -535,7 +697,7 @@ function cleanLatexDelimiters(text) {
 // Local Storage History Management
 function loadHistory() {
     try {
-        const stored = localStorage.getItem("oabt_question_history");
+        const stored = storage.getItem("oabt_question_history");
         questionHistory = stored ? JSON.parse(stored) : [];
     } catch (e) {
         console.error(e);
@@ -552,14 +714,14 @@ function saveToHistory(qData) {
         if (questionHistory.length > 20) {
             questionHistory.pop();
         }
-        localStorage.setItem("oabt_question_history", JSON.stringify(questionHistory));
+        storage.setItem("oabt_question_history", JSON.stringify(questionHistory));
     }
 }
 
 function clearHistory() {
     if (confirm("Tüm soru geçmişini silmek istediğinize emin misiniz?")) {
         questionHistory = [];
-        localStorage.removeItem("oabt_question_history");
+        storage.removeItem("oabt_question_history");
         updateHistoryUI();
         updateChart();
         document.getElementById("results-panel").style.display = "none";
@@ -793,10 +955,10 @@ function updateChart() {
 
 // ==================== TEST BUILDER FEATURES ====================
 
-// Load Test Pool from localStorage
+// Load Test Pool from storage
 function loadTestPool() {
     try {
-        const stored = localStorage.getItem("oabt_test_pool");
+        const stored = storage.getItem("oabt_test_pool");
         testPool = stored ? JSON.parse(stored) : [];
     } catch (e) {
         console.error(e);
@@ -817,8 +979,8 @@ function toggleTestQuestion() {
         testPool.push(currentQuestion);
     }
     
-    // Save to localStorage
-    localStorage.setItem("oabt_test_pool", JSON.stringify(testPool));
+    // Save to storage
+    storage.setItem("oabt_test_pool", JSON.stringify(testPool));
     
     // Update UIs
     updateTestToggleBtnState(currentQuestion.id);
@@ -897,7 +1059,7 @@ function updateTestPoolUI() {
         item.querySelector("button").addEventListener("click", (e) => {
             e.stopPropagation();
             testPool = testPool.filter(qp => qp.id !== q.id);
-            localStorage.setItem("oabt_test_pool", JSON.stringify(testPool));
+            storage.setItem("oabt_test_pool", JSON.stringify(testPool));
             updateTestPoolUI();
             if (currentQuestion && currentQuestion.id === q.id) {
                 updateTestToggleBtnState(q.id);
@@ -1013,6 +1175,10 @@ function printTest(mode) {
     let solutionsHtml = "";
     
     testPool.forEach((q, index) => {
+        let svgHtml = "";
+        if (q.svg_geometry) {
+            svgHtml = `<div style="display: flex; justify-content: center; margin: 15px 0; background: #fafafa; border-radius: 8px; padding: 12px; border: 1px solid #e2e8f0; color: #111;">${q.svg_geometry}</div>`;
+        }
         questionsHtml += `
             <div class="print-question" style="page-break-inside: avoid; margin-bottom: 40px; border-bottom: 1px dashed #eee; padding-bottom: 20px;">
                 <div style="font-weight: bold; font-size: 16px; margin-bottom: 12px; color: #111;">
@@ -1020,6 +1186,7 @@ function printTest(mode) {
                 </div>
                 <div style="margin-bottom: 20px; font-size: 14.5px; line-height: 1.7;">
                     ${q.question}
+                    ${svgHtml}
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px; margin-left: 15px; margin-bottom: 10px;">
         `;
@@ -1242,7 +1409,11 @@ function renderSolverQuestion(index) {
     document.getElementById("solver-progress").textContent = `Soru ${index + 1} / ${testPool.length}`;
     
     // Render question text
-    document.getElementById("solver-q-text").innerHTML = preprocessText(q.question);
+    let questionHtml = preprocessText(q.question);
+    if (q.svg_geometry) {
+        questionHtml += `<div class="question-svg-container" style="display: flex; justify-content: center; margin: 20px 0; background: rgba(255,255,255,0.03); border-radius: 8px; padding: 15px; border: 1px solid rgba(255,255,255,0.08);">${q.svg_geometry}</div>`;
+    }
+    document.getElementById("solver-q-text").innerHTML = questionHtml;
     
     // Render options
     const optionsContainer = document.getElementById("solver-options-list");
@@ -1458,5 +1629,84 @@ function finishTestSolver() {
     
     if (typeof lucide !== 'undefined') {
         lucide.createIcons();
+    }
+}
+
+// Update the edited question in history, testPool and sync to storage
+function updateHistoryAndPool(updatedQuestion) {
+    // 1. Update in questionHistory
+    const histIdx = questionHistory.findIndex(q => q.id === updatedQuestion.id);
+    if (histIdx !== -1) {
+        questionHistory[histIdx] = updatedQuestion;
+        storage.setItem("oabt_question_history", JSON.stringify(questionHistory));
+    }
+    
+    // 2. Update in testPool
+    const poolIdx = testPool.findIndex(q => q.id === updatedQuestion.id);
+    if (poolIdx !== -1) {
+        testPool[poolIdx] = updatedQuestion;
+        storage.setItem("oabt_test_pool", JSON.stringify(testPool));
+    }
+    
+    // 3. Refresh UI elements
+    updateHistoryUI();
+    updateTestPoolUI();
+    updateChart();
+}
+
+// Event handler for AI-powered question correction
+async function handleAIQuestionEdit() {
+    const apiKey = document.getElementById("api-key-input").value.trim();
+    const model = document.getElementById("model-select").value;
+    const promptInput = document.getElementById("ai-edit-prompt");
+    const editInstruction = promptInput.value.trim();
+
+    if (!currentQuestion) {
+        alert("Lütfen önce düzenlenecek bir soru üretin.");
+        return;
+    }
+    if (!editInstruction) {
+        alert("Lütfen düzeltmek istediğiniz yönergeyi girin.");
+        return;
+    }
+    if (!apiKey) {
+        alert("Yapay zeka ile düzeltme yapabilmek için lütfen geçerli bir API anahtarı girin.");
+        return;
+    }
+
+    // Show loading state on edit button
+    const btn = document.getElementById("btn-ai-edit");
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner" style="width:12px; height:12px; border-width:2px; margin-right:6px;"></span> Düzenleniyor...`;
+
+    try {
+        console.log("Editing question via Gemini API:", editInstruction);
+        const updatedQuestion = await editQuestionWithGemini(currentQuestion, editInstruction, apiKey, model);
+        
+        // Merge metadata and ID to keep context
+        updatedQuestion.id = currentQuestion.id;
+        updatedQuestion.metadata = currentQuestion.metadata;
+        updatedQuestion.metadata.timestamp = new Date().toLocaleString("tr-TR");
+        
+        // Assign to global state
+        currentQuestion = updatedQuestion;
+        
+        // Update storage and sync
+        updateHistoryAndPool(currentQuestion);
+        
+        // Render updated view
+        renderQuestion(currentQuestion);
+        
+        // Clean prompt input
+        promptInput.value = "";
+        
+        alert("Soru başarıyla güncellendi!");
+    } catch (err) {
+        console.error("AI question edit failed:", err);
+        alert("Soru güncellenirken bir hata oluştu: " + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
     }
 }
