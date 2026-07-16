@@ -21,6 +21,8 @@ let activeGenerationMode = "original";
 let activeSimilarSource = "template";
 let uploadedFileData = null;
 let selectedOutcome = "";
+let selectedSubOutcome = "";
+let selectedSubOutcomeText = "";
 let selectedTheorems = [];
 let questionHistory = [];
 let testPool = []; // Selected questions for test
@@ -227,12 +229,14 @@ function switchDomain(domainKey) {
         if (index === 0) {
             pill.classList.add("active");
             selectedOutcome = kazanim.id;
+            renderSubOutcomes(kazanim);
         }
 
         pill.addEventListener("click", () => {
             document.querySelectorAll("#sub-outcomes-container .outcome-pill").forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
             selectedOutcome = kazanim.id;
+            renderSubOutcomes(kazanim);
         });
 
         outcomesContainer.appendChild(pill);
@@ -263,6 +267,50 @@ function switchDomain(domainKey) {
     } else {
         theoremsContainer.innerHTML = "<div class='empty-state' style='padding:10px 0;'>Bu konu için tanımlı teorem yok.</div>";
     }
+}
+
+// Render sub outcomes of the selected kazanım (alt kazanımlar)
+function renderSubOutcomes(kazanimObj) {
+    const container = document.getElementById("alt-kazanim-container");
+    const section = document.getElementById("alt-kazanim-section");
+    if (!container || !section) return;
+
+    container.innerHTML = "";
+    selectedSubOutcome = "";
+    selectedSubOutcomeText = "";
+
+    if (!kazanimObj.sub_kazanimlar || kazanimObj.sub_kazanimlar.length === 0) {
+        section.style.display = "none";
+        return;
+    }
+
+    section.style.display = "flex";
+
+    kazanimObj.sub_kazanimlar.forEach(sub => {
+        const pill = document.createElement("button");
+        pill.type = "button";
+        pill.className = "outcome-pill alt-outcome-pill";
+        pill.style.padding = "4px 8px";
+        pill.style.fontSize = "11px";
+        pill.textContent = sub.text;
+        pill.dataset.id = sub.id;
+
+        pill.addEventListener("click", () => {
+            const isActive = pill.classList.contains("active");
+            document.querySelectorAll("#alt-kazanim-container .outcome-pill").forEach(p => p.classList.remove("active"));
+            
+            if (isActive) {
+                selectedSubOutcome = "";
+                selectedSubOutcomeText = "";
+            } else {
+                pill.classList.add("active");
+                selectedSubOutcome = sub.id;
+                selectedSubOutcomeText = sub.text;
+            }
+        });
+
+        container.appendChild(pill);
+    });
 }
 
 // Setup parameters listeners (Bloom, SOLO, DOK, Difficulty)
@@ -427,7 +475,10 @@ async function generateQuestion() {
     // Find active outcome text
     const domainData = KAZANIMLAR_DATA[activeDomain];
     const outcomeObj = domainData.kazanimlar.find(k => k.id === selectedOutcome);
-    const kazanimText = outcomeObj ? outcomeObj.text : "";
+    let kazanimText = outcomeObj ? outcomeObj.text : "";
+    if (selectedSubOutcome && selectedSubOutcomeText) {
+        kazanimText += ` (Özellikle şu alt kazanıma odaklanın: ${selectedSubOutcomeText})`;
+    }
 
     const params = {
         domainKey: activeDomain,
